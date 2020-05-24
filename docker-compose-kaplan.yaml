@@ -1,0 +1,126 @@
+version: '3.4'
+
+services:
+
+#  proxy:
+#    image: traefik:1.7.2-alpine
+#    restart: always
+#    volumes:
+#      - ./traefik/traefik.toml:/traefik.toml
+#      - ./traefik/acme.json:/acme.json
+#    networks:
+#    - ckan-multi
+
+  varnish:
+    image: million12/varnish@sha256:dfac8ea04b8049a7bb3241bafab213504addacfe2d67f7fad5713bd10573e470
+    depends_on:
+      - ckan
+    volumes:
+      - ./varnish:/etc/varnish
+    expose:
+      - "80"
+    networks:
+    - ckan-multi
+
+  redis:
+    image: redis:alpine@sha256:8be79c511a69ad912f0366d5250968916d1438ff3b1a420c52e3ada98d03c57a
+    restart: always
+    expose:
+    - "6379"
+    networks:
+    - ckan-multi
+
+  nginx:
+    depends_on:
+    - ckan
+    build:
+      context: nginx
+    restart: always
+    expose:
+    - "8080"
+    networks:
+    - ckan-multi
+
+#  adminer:
+#    image: adminer
+#    restart: always
+#    expose:
+#      - "8080"
+#    networks:
+#    - ckan-multi
+
+  jobs:
+    depends_on:
+    - ckan
+    - nginx
+    build:
+      context: ckan
+      args:
+        CKAN_BRANCH: ${CKAN_BRANCH:-ckan-2.8.1}
+        CKAN_REPO: ${CKAN_REPO:-ckan/ckan}
+    command: [/ckan-entrypoint.sh, ckan-paster, --plugin=ckan, jobs, -c, /etc/ckan/production.ini, worker]
+    restart: always
+    volumes:
+    - ./docker-compose/ckan-secrets.sh:/etc/ckan-conf/secrets/secrets.sh
+    - ./docker-compose/ckan-conf-templates:/etc/ckan-conf/templates
+    - ckan-data:/var/lib/ckan
+    environment:
+    - CKAN_STORAGE_PATH=/var/lib/ckan/data
+    - CKAN_K8S_SECRETS=/etc/ckan-conf/secrets/secrets.sh
+    - CKAN_K8S_TEMPLATES=/etc/ckan-conf/templates
+    networks:
+    - ckan-multi
+
+  solr:
+    build:
+      context: solr
+      args:
+        SCHEMA_XML: ${SCHEMA_XML:-schemas/schema28.xml}
+    restart: always
+    expose:
+    - "8983"
+    volumes:
+    - solr:/opt/solr/server
+    networks:
+    - ckan-multi
+
+  datapusher:
+    build:
+      context: datapusher
+    expose:
+      - "8800"
+    networks:
+    - ckan-multi
+
+  ckan:
+    depends_on:
+    - redis
+    - solr
+    build:
+      context: ckan
+      args:
+        CKAN_BRANCH: ${CKAN_BRANCH:-ckan-2.8.1}
+        CKAN_REPO: ${CKAN_REPO:-ckan/ckan}
+    restart: always
+    volumes:
+    - ./docker-compose/ckan-secrets.sh:/etc/ckan-conf/secrets/secrets.sh
+    - ./docker-compose/ckan-conf-templates:/etc/ckan-conf/templates
+    - ckan-data:/var/lib/ckan
+    - ./migrate_databases.sh:/usr/lib/ckan/migrate_databases.sh
+    - ./migrate_filestorage.sh:/usr/lib/ckan/migrate_filestorage.sh
+    environment:
+    - CKAN_STORAGE_PATH=/var/lib/ckan/data
+    - CKAN_K8S_SECRETS=/etc/ckan-conf/secrets/secrets.sh
+    - CKAN_K8S_TEMPLATES=/etc/ckan-conf/templates
+    - GUNICORN_WORKERS=2
+    expose:
+    - "5000"
+    networks:
+    - ckan-multi
+
+volumes:
+  ckan-data:
+  solr:
+
+networks:
+  ckan-multi:
